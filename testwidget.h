@@ -18,5 +18,5 @@ public:
     ~TestWidget();
 
 private:
-    QScopedPointer<TestWidgetPrivate> d_ptr;
+    const QScopedPointer<TestWidgetPrivate> d_ptr;
 };
