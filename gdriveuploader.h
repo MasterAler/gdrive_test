@@ -12,7 +12,7 @@ class GDriveUploader : public QObject
 public:
     explicit GDriveUploader(QObject *parent = nullptr);
 
-    void grantAuth();
+    void dealWithAuth();
 
 public slots:
     void getDriveFilesList() const;
