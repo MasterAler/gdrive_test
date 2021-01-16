@@ -110,6 +110,13 @@
            <item>
             <widget class="QListWidget" name="filesListWidget"/>
            </item>
+           <item>
+            <widget class="QProgressBar" name="lameProgressBar">
+             <property name="value">
+              <number>0</number>
+             </property>
+            </widget>
+           </item>
           </layout>
          </widget>
          <widget class="QSplitter" name="splitter">
