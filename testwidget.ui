@@ -67,13 +67,6 @@
              </property>
             </widget>
            </item>
-           <item>
-            <widget class="QPushButton" name="cancelPushButton">
-             <property name="text">
-              <string>Cancel</string>
-             </property>
-            </widget>
-           </item>
           </layout>
          </item>
          <item>
@@ -93,9 +86,9 @@
          <item>
           <layout class="QHBoxLayout" name="horizontalLayout_2">
            <item>
-            <widget class="QLabel" name="label">
+            <widget class="QPushButton" name="listFilesPushButton">
              <property name="text">
-              <string>Что происходит:</string>
+              <string>List Files</string>
              </property>
             </widget>
            </item>
@@ -113,6 +106,16 @@
             </spacer>
            </item>
           </layout>
+         </item>
+         <item>
+          <widget class="QListWidget" name="driveFilesListWidget"/>
+         </item>
+         <item>
+          <widget class="QLabel" name="label">
+           <property name="text">
+            <string>Что происходит:</string>
+           </property>
+          </widget>
          </item>
          <item>
           <widget class="QTextEdit" name="logTextEdit"/>
