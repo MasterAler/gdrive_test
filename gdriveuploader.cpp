@@ -16,6 +16,7 @@ const QString GDRIVE_API_URI = "https://www.googleapis.com/drive/v3/files";
 const QString GDRIVE_UPLOAD_URI = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable";
 const int OK = 200;
 const int CREATED = 200;
+const int NO_AUTH = 401;
 }
 
 class GDriveUploaderPrivate
@@ -24,10 +25,10 @@ class GDriveUploaderPrivate
     GDriveUploaderPrivate(GDriveUploader *ownerPtr)
         : q_ptr(ownerPtr)
         , m_authProvider(new AuthProvider(ownerPtr))
+        , m_networkManager{new QNetworkAccessManager(ownerPtr)}
     {
-        QObject::connect(m_authProvider, &AuthProvider::tokenReceived, [this](const QString& token){
+        QObject::connect(m_authProvider, &AuthProvider::tokenReady, [this](const QString& token){
             m_authToken = token;
-            m_networkManager = m_authProvider->getNetworkManager();
             emit q_ptr->grantFinished();
             emit q_ptr->displayLogMsg(QString("token: %1").arg(m_authToken));
         });
@@ -40,12 +41,11 @@ class GDriveUploaderPrivate
 
 private:
     GDriveUploader * const q_ptr;
+
     AuthProvider* m_authProvider;
+    QNetworkAccessManager* m_networkManager;
 
-    QNetworkAccessManager* m_networkManager = nullptr;
     QString m_authToken;
-
-    QHash<QString, QString> m_sessions;
     QMimeDatabase m_mimeDB;
 };
 
@@ -85,10 +85,8 @@ bool GDriveUploaderPrivate::InitFileUpload(const QString &path)
     QNetworkRequest request(GDRIVE_UPLOAD_URI);
 
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        qCritical() << "unable to open: " << path << " for upload:" << file.errorString();
+    if (!file.open(QIODevice::ReadOnly))
         return false;
-    }
 
     auto fileSize = QString::number(file.size()).toUtf8();
     file.close();
@@ -108,11 +106,12 @@ bool GDriveUploaderPrivate::InitFileUpload(const QString &path)
 
     QObject::connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::errorOccurred), q, &GDriveUploader::networkError);
 
-    QObject::connect(reply, &QNetworkReply::metaDataChanged, [this, path, reply, sz=file.size()]{
-        QVariant statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-        if (statusCode.isValid() && statusCode.toInt() == OK)
-            m_sessions[path] = reply->header(QNetworkRequest::LocationHeader).toString();
-    });
+    // Вот здесь надо запоминать URI из Location, если для чего-то понадобится кешить его
+    //    QObject::connect(reply, &QNetworkReply::metaDataChanged, [this, path, reply]{
+    //        QVariant statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+    //        if (statusCode.isValid() && statusCode.toInt() == OK)
+    //            qDebug() << reply->header(QNetworkRequest::LocationHeader).toString();
+    //    });
 
     QObject::connect(reply, &QNetworkReply::finished, [reply, path, q, this] {
         if (reply->error() == QNetworkReply::NoError)
@@ -123,6 +122,14 @@ bool GDriveUploaderPrivate::InitFileUpload(const QString &path)
                 emit q->displayLogMsg(QString("Target %1 -- upload init").arg(path));
                 if (!LaunchUpload(path, reply->header(QNetworkRequest::LocationHeader).toString()))
                     ReportUploadAttemptEnded(path, false);
+            } else if (statusCode.toInt() == NO_AUTH) {
+                // Здесь надо бы перезапросить авторизацию, что-то врое такого:
+                // m_authProvider->grantAuth();
+                // В идеале пришлось бы запомнить `request`, повторить в новым токеном и т.д.
+                // Это не сложно, просто пришлось бы немного муторно аккуратно кешить запросы и
+                // повторять отвалившиеся, сейчас реализация простая и требует только токен
+
+                emit q->displayLogMsg("AUTH EXPIRED, RESTART APP (demo lacks reauth)");
             }
         }
         else
@@ -151,12 +158,18 @@ bool GDriveUploaderPrivate::LaunchUpload(const QString& path, const QString& uri
     Q_Q(GDriveUploader);
     QObject::connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::errorOccurred), q, &GDriveUploader::networkError);
 
-    QObject::connect(reply, &QNetworkReply::finished, [reply, path, this] {
+    QObject::connect(reply, &QNetworkReply::finished, [reply, path, this, q] {
         if (reply->error() == QNetworkReply::NoError)
         {
             QVariant statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
             if (statusCode.isValid() && (statusCode.toInt() == OK || statusCode.toInt() == CREATED))
                 ReportUploadAttemptEnded(path, true);
+            else if (statusCode.toInt() == NO_AUTH)
+            {
+                // Здесь тоже надо переавторизоваться, 404 вообще-то тоже означает проблему авторизации, все 4xx ошибки,
+                // если верить Google. Их надо бы обрабатывать.
+                emit q->displayLogMsg("AUTH EXPIRED, RESTART APP (demo lacks reauth)");
+            }
         }
         else
             ReportUploadAttemptEnded(path, false);
@@ -170,7 +183,6 @@ bool GDriveUploaderPrivate::LaunchUpload(const QString& path, const QString& uri
 void GDriveUploaderPrivate::ReportUploadAttemptEnded(const QString& path, bool ok)
 {
     Q_Q(GDriveUploader);
-    m_sessions.remove(path);
     emit q->displayLogMsg(QString("Upload %1 : %2").arg(ok ? "SUCCESS" : "FAIL").arg(path));
 }
 
@@ -181,11 +193,17 @@ GDriveUploader::GDriveUploader(QObject *parent)
     , d_ptr{new GDriveUploaderPrivate(this)}
 { }
 
-void GDriveUploader::grantAuth()
+void GDriveUploader::dealWithAuth()
 {
     Q_D(GDriveUploader);
-    d->m_authToken.clear();
-    d->m_authProvider->grantAuth();
+    d->m_authToken = d->m_authProvider->getToken();
+    if (d->m_authToken.isEmpty())
+        d->m_authProvider->grantAuth();
+    else
+    {
+        emit grantFinished();
+        emit displayLogMsg(QString("token: %1").arg(d->m_authToken));
+    }
 }
 
 void GDriveUploader::addFilesForUpload(const QStringList &fileNames)

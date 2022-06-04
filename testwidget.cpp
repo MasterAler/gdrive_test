@@ -65,7 +65,7 @@ class TestWidgetPrivate
             ui->logTextEdit->setText(ui->logTextEdit->toPlainText() + QString("\n%1\n").arg(msg));
         });
 
-        uploader->grantAuth();
+        uploader->dealWithAuth();
     }
 
 private:

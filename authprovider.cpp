@@ -7,10 +7,19 @@
 #include <QJsonArray>
 #include <QDesktopServices>
 #include <QFile>
+#include <QSettings>
+#include <QDateTime>
+
+namespace
+{
+const QString ACCESS_TOKEN_KEY = "access_token";
+const QString EXPIRATION_KEY = "expires_in";
+}
 
 AuthProvider::AuthProvider(QObject *parent)
     : QObject(parent)
     , m_gdrive(new QOAuth2AuthorizationCodeFlow(this))
+    , m_tokenStorage(new QSettings(QSettings::IniFormat, QSettings::UserScope, "Interviewing", "TestApp", this))
 {
     QFile clientRes(":/res/client_id.json"); // hardcoded, oops
     if (!clientRes.open(QIODevice::ReadOnly))
@@ -41,16 +50,27 @@ AuthProvider::AuthProvider(QObject *parent)
 
     QObject::connect(m_replyHandler, &QOAuthHttpServerReplyHandler::tokensReceived, [this](const QVariantMap& tokens)
     {
-        emit tokenReceived(tokens["access_token"].toString());
+        m_tokenStorage->setValue(ACCESS_TOKEN_KEY, tokens[ACCESS_TOKEN_KEY]);
+        m_tokenStorage->setValue(EXPIRATION_KEY, QDateTime::currentSecsSinceEpoch() + tokens[EXPIRATION_KEY].toInt());
+        m_tokenStorage->sync();
+
+        emit tokenReady(tokens[ACCESS_TOKEN_KEY].toString());
     });
+
+    // ---------
+
+    m_authToken = m_tokenStorage->value(ACCESS_TOKEN_KEY).toString();
+    qint64 expirationTime = m_tokenStorage->value(EXPIRATION_KEY).toLongLong();
+    if (expirationTime < QDateTime::currentSecsSinceEpoch())
+        m_authToken.clear();
+}
+
+QString AuthProvider::getToken() const
+{
+    return m_authToken;
 }
 
 void AuthProvider::grantAuth()
 {
     m_gdrive->grant();
-}
-
-QNetworkAccessManager *AuthProvider::getNetworkManager() const
-{
-    return m_gdrive->networkAccessManager();
 }

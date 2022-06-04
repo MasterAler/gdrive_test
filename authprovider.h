@@ -5,12 +5,12 @@
 class QOAuth2AuthorizationCodeFlow;
 class QOAuthHttpServerReplyHandler;
 class QNetworkAccessManager;
+class QSettings;
 
 /*!
- * \brief The AuthProvider
- * должен обновлять данные о токенах, птому что там есть expires_in,
- * а ещё лучше --  действовать через refresh tokens, но не стал развивать эту тему,
- * особенно потому, что в Qt эти классы очень сырые, надо было бы тащить стороннюю либу тогда
+ * \brief The AuthProvider class
+ * содержит авторизацию, сделано через очень сырые классы из `networkauth`,
+ * потому оставлено достаточно тупо. В идеале тут должны быть всякие refresh token хотя бы.
  */
 class AuthProvider : public QObject
 {
@@ -18,14 +18,18 @@ class AuthProvider : public QObject
 public:
     explicit AuthProvider(QObject *parent = nullptr);
 
+    QString getToken() const;
+
+public slots:
     void grantAuth();
 
-    QNetworkAccessManager* getNetworkManager() const;
-
 signals:
-    void tokenReceived(const QString& token);
+    void tokenReady(const QString& token);
 
 private:
     QOAuth2AuthorizationCodeFlow* m_gdrive;
     QOAuthHttpServerReplyHandler* m_replyHandler = nullptr;
+    QSettings* m_tokenStorage;
+
+    QString m_authToken;
 };
