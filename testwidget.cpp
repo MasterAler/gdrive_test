@@ -3,6 +3,9 @@
 
 #include <QDialog>
 #include <QFileDialog>
+#include <QSplashScreen>
+
+#include "gdriveuploader.h"
 
 class TestWidgetPrivate
 {
@@ -10,6 +13,7 @@ class TestWidgetPrivate
     TestWidgetPrivate(TestWidget *ownerPtr)
         : q_ptr(ownerPtr)
         , ui(new Ui::TestWidget)
+        , uploader{new GDriveUploader(ownerPtr)}
     { }
 
     void configUI()
@@ -29,14 +33,37 @@ class TestWidgetPrivate
         QObject::connect(ui->filesListWidget, &QListWidget::doubleClicked, [this](const QModelIndex& index) {
             ui->filesListWidget->model()->removeRow(index.row());
         });
+
+        QObject::connect(ui->uploadPushButton, &QAbstractButton::clicked, [this]{
+            ui->uploadPushButton->setEnabled(false);
+
+            QStringList targets;
+            for (int i = 0 ; i < ui->filesListWidget->model()->rowCount(); ++i)
+                targets << ui->filesListWidget->item(i)->text();
+
+            uploader->addFilesForUpload(targets);
+        });
+
+        QObject::connect(ui->cancelPushButton, &QAbstractButton::clicked, [this]{
+            uploader->cancelUploads();
+            ui->uploadPushButton->setEnabled(true);
+        });
+
+        ui->stackedWidget->setCurrentIndex(1);
+        QObject::connect(uploader, &GDriveUploader::grantFinished, [this]{
+            ui->stackedWidget->setCurrentIndex(0);
+        });
+        uploader->grantAuth();
     }
 
 private:
     TestWidget * const q_ptr;
     QScopedPointer<Ui::TestWidget> ui;
+
+    GDriveUploader *uploader;
 };
 
-/****************************************************************/
+/*************************************************************************************************************************/
 
 TestWidget::TestWidget(QWidget *parent)
     : QWidget(parent)
@@ -48,4 +75,3 @@ TestWidget::TestWidget(QWidget *parent)
 
 TestWidget::~TestWidget()
 { }
-
