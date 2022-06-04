@@ -19,6 +19,9 @@ const int CREATED = 200;
 const int NO_AUTH = 401;
 }
 
+/*!
+ * \brief The GDriveUploaderPrivate class == Я очень люблю PImpl
+ */
 class GDriveUploaderPrivate
 {
     Q_DECLARE_PUBLIC(GDriveUploader)
@@ -27,9 +30,10 @@ class GDriveUploaderPrivate
         , m_authProvider(new AuthProvider(ownerPtr))
         , m_networkManager{new QNetworkAccessManager(ownerPtr)}
     {
-        QObject::connect(m_authProvider, &AuthProvider::tokenReady, [this](const QString& token){
+        QObject::connect(m_authProvider, &AuthProvider::tokenReady, [this](const QString& token)
+        {
             m_authToken = token;
-            emit q_ptr->grantFinished();
+            emit q_ptr->authObtained();
             emit q_ptr->displayLogMsg(QString("token: %1").arg(m_authToken));
         });
     }
@@ -38,6 +42,7 @@ class GDriveUploaderPrivate
     bool InitFileUpload(const QString& path);
     bool LaunchUpload(const QString& path, const QString& uri);
     void ReportUploadAttemptEnded(const QString& path, bool ok);
+    void CalcProgress();
 
 private:
     GDriveUploader * const q_ptr;
@@ -47,6 +52,8 @@ private:
 
     QString m_authToken;
     QMimeDatabase m_mimeDB;
+
+    QHash<QString, QPair<qint64, qint64>> m_uploadProgresses;
 };
 
 void GDriveUploaderPrivate::ListRemoteFiles() const
@@ -62,8 +69,10 @@ void GDriveUploaderPrivate::ListRemoteFiles() const
     auto reply = m_networkManager->get(request);
 
     QObject::connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::errorOccurred), q, &GDriveUploader::networkError);
-    QObject::connect(reply, &QNetworkReply::finished, [reply, q] {
-        if (reply->error() == QNetworkReply::NoError) {
+    QObject::connect(reply, &QNetworkReply::finished, [reply, q]
+    {
+        if (reply->error() == QNetworkReply::NoError)
+        {
             QStringList result;
 
             auto response = QJsonDocument::fromJson(reply->readAll()).object();
@@ -73,7 +82,7 @@ void GDriveUploaderPrivate::ListRemoteFiles() const
             emit q->fileListReceived(result);
         }
         else
-            qCritical() << reply->errorString();
+            emit q->displayLogMsg(reply->errorString());
 
         reply->deleteLater();
     });
@@ -113,12 +122,14 @@ bool GDriveUploaderPrivate::InitFileUpload(const QString &path)
     //            qDebug() << reply->header(QNetworkRequest::LocationHeader).toString();
     //    });
 
-    QObject::connect(reply, &QNetworkReply::finished, [reply, path, q, this] {
+    QObject::connect(reply, &QNetworkReply::finished, [reply, path, sz = file.size(), q, this]
+    {
         if (reply->error() == QNetworkReply::NoError)
         {
             QVariant statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
             if (statusCode.isValid() && statusCode.toInt() == OK)
             {
+                m_uploadProgresses[path] = qMakePair(0, sz);
                 emit q->displayLogMsg(QString("Target %1 -- upload init").arg(path));
                 if (!LaunchUpload(path, reply->header(QNetworkRequest::LocationHeader).toString()))
                     ReportUploadAttemptEnded(path, false);
@@ -158,7 +169,8 @@ bool GDriveUploaderPrivate::LaunchUpload(const QString& path, const QString& uri
     Q_Q(GDriveUploader);
     QObject::connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::errorOccurred), q, &GDriveUploader::networkError);
 
-    QObject::connect(reply, &QNetworkReply::finished, [reply, path, this, q] {
+    QObject::connect(reply, &QNetworkReply::finished, [reply, path, this, q]
+    {
         if (reply->error() == QNetworkReply::NoError)
         {
             QVariant statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
@@ -177,6 +189,11 @@ bool GDriveUploaderPrivate::LaunchUpload(const QString& path, const QString& uri
         reply->deleteLater();
     });
 
+    QObject::connect(reply, &QNetworkReply::uploadProgress, [path, this](qint64 bytesSent, qint64 bytesTotal)
+    {
+        m_uploadProgresses[path] = qMakePair(bytesSent, bytesTotal);
+        CalcProgress();
+    });
     return true;
 }
 
@@ -184,6 +201,23 @@ void GDriveUploaderPrivate::ReportUploadAttemptEnded(const QString& path, bool o
 {
     Q_Q(GDriveUploader);
     emit q->displayLogMsg(QString("Upload %1 : %2").arg(ok ? "SUCCESS" : "FAIL").arg(path));
+}
+
+void GDriveUploaderPrivate::CalcProgress()
+{
+    qint64 sent = 0;
+    qint64 pending = 0;
+    for(const QString& key : m_uploadProgresses.keys())
+    {
+        if (m_uploadProgresses[key].second > 0)
+        {
+            sent += m_uploadProgresses[key].first;
+            pending += m_uploadProgresses[key].second;
+        }
+    }
+
+    Q_Q(GDriveUploader);
+    emit q->reportProgress(qRound(100. * sent / pending));
 }
 
 /*************************************************************************************************************************/
@@ -201,7 +235,7 @@ void GDriveUploader::dealWithAuth()
         d->m_authProvider->grantAuth();
     else
     {
-        emit grantFinished();
+        emit authObtained();
         emit displayLogMsg(QString("token: %1").arg(d->m_authToken));
     }
 }
@@ -219,9 +253,8 @@ void GDriveUploader::addFilesForUpload(const QStringList &fileNames)
     }
 }
 
-void GDriveUploader::getDriveFilesList() const
+void GDriveUploader::requestDriveFilesList() const
 {
     Q_D(const GDriveUploader);
     d->ListRemoteFiles();
 }
-
